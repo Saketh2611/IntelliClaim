@@ -1,0 +1,19 @@
+[project]
+name = "intelliclaim"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.109.1",
+    "fastapi>=0.136.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.27",
+    "supabase>=2.29.0",
+    "uvicorn[standard]>=0.46.0",
+]
