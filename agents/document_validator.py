@@ -1,19 +1,20 @@
 import json
 import time
+import asyncio
 from datetime import datetime
-from anthropic import AsyncAnthropic
+from google import genai
 from core.config import settings
 from core.exceptions import DocumentValidationError, UnreadableDocumentError
 from services.policy_loader import get_document_requirements
 from db import supabase
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = settings.gemini_model
 
 
 class DocumentValidatorAgent:
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self.client = genai.Client(api_key=settings.gemini_api_key)
 
     async def run(self, claim: dict, documents: list[dict]) -> None:
         start = time.time()
@@ -47,13 +48,8 @@ Respond with JSON:
   "issues": [...]
 }}"""
 
-        response = await self.client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        result_text = response.content[0].text
+        response = await asyncio.to_thread(self.client.models.generate_content, model=MODEL, contents=prompt)
+        result_text = getattr(response, "text", None) or getattr(response, "response", None) or str(response)
         try:
             result = json.loads(result_text)
         except json.JSONDecodeError:

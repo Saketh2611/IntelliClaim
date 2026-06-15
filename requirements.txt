@@ -9,3 +9,4 @@ python-multipart
 pytest
 pytest-asyncio
 httpx
+google-genai
