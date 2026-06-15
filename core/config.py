@@ -7,8 +7,10 @@ load_dotenv()
 
 class Settings(BaseSettings):
     supabase_url: str = Field(..., env="SUPABASE_URL")
-    supabase_service_role_key: str = Field(..., env="SUPABASE_SERVICE_ROLE_KEY")
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    supabase_service_role_key: str | None = Field(None, env="SUPABASE_SERVICE_ROLE_KEY")
+    # support legacy env name SUPABASE_KEY
+    supabase_key: str | None = Field(None, env="SUPABASE_KEY")
+    anthropic_api_key: str | None = Field(None, env="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(None, env="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-3.5-flash")
     api_key: str = Field("dev-key")
@@ -22,3 +24,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# If a legacy SUPABASE_KEY is present, use it for supabase_service_role_key
+if not settings.supabase_service_role_key and settings.supabase_key:
+    settings.supabase_service_role_key = settings.supabase_key
