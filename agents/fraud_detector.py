@@ -1,17 +1,14 @@
-import asyncio
 import json
 import time
 from datetime import date, datetime
 
-from google import genai
-
 from core.config import settings
 from core.exceptions import ComponentFailureError
-from core.gemini_retry import call_gemini_with_retry
 from db import supabase
+from services.llm_client import call_llm
 from services.policy_loader import get_fraud_thresholds, get_network_hospitals
 
-MODEL = settings.gemini_model
+MODEL = settings.groq_model
 
 
 class FraudDetectorAgent:
@@ -23,7 +20,6 @@ class FraudDetectorAgent:
 
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client = genai.Client(api_key=settings.gemini_api_key)
 
     async def run(self, claim: dict) -> dict:
         start = time.time()
@@ -180,8 +176,7 @@ class FraudDetectorAgent:
         claim_history: list[dict],
         deterministic_flags: list[str],
     ) -> dict:
-        prompt = f"""You are an insurance fraud detection agent.
-Analyze this claim for fraud indicators, but do not override deterministic flags.
+        prompt = f"""Analyze this claim for fraud indicators, but do not override deterministic flags.
 
 Claim details:
 - Claim ID: {claim_id}
@@ -209,8 +204,10 @@ Respond ONLY with JSON:
   "reasoning": "short explanation"
 }}"""
 
-        response = await call_gemini_with_retry(self.client, MODEL, prompt)
-        text = getattr(response, "text", None) or str(response)
+        text = call_llm(
+            prompt=prompt,
+            system="You are an insurance fraud detection agent.",
+        )
         return self._parse_json(text)
 
     def _merge_results(

@@ -1,10 +1,10 @@
 import json
 import time
 from datetime import date, datetime, timedelta
-from google import genai
+
 from core.config import settings
 from core.exceptions import ComponentFailureError
-from core.gemini_retry import call_gemini_with_retry
+from services.llm_client import call_llm
 from services.policy_loader import (
     get_coverage_for_category,
     get_waiting_periods,
@@ -14,9 +14,9 @@ from services.policy_loader import (
 )
 from db import supabase
 
-MODEL = settings.gemini_model
+MODEL = settings.groq_model
 
-# keyword → condition key for fallback matching
+# keyword -> condition key for fallback matching
 DIAGNOSIS_CONDITION_MAP = {
     "diabetes":          ["diabetes", "t2dm", "type 2 diabetes", "diabetic", "dm2"],
     "hypertension":      ["hypertension", "htn", "high blood pressure"],
@@ -29,7 +29,7 @@ DIAGNOSIS_CONDITION_MAP = {
     "cataract":          ["cataract"],
 }
 
-# procedures requiring pre-auth → minimum amount threshold (0 = always)
+# procedures requiring pre-auth -> minimum amount threshold (0 = always)
 PRE_AUTH_TRIGGERS = {
     "MRI":      10000,
     "CT SCAN":  10000,
@@ -42,26 +42,23 @@ PRE_AUTH_TRIGGERS = {
 class PolicyCheckerAgent:
     """
     Fully deterministic policy checking.
-    LLM only used for diagnosis → condition mapping (fuzzy text).
+    LLM only used for diagnosis -> condition mapping (fuzzy text).
     All financial calculations done in code.
     """
 
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client   = genai.Client(api_key=settings.gemini_api_key)
 
     async def run(self, claim: dict, documents: list[dict]) -> dict:
         start = time.time()
 
         try:
-            # ── Fix 1: correct key names ──────────────────────────────────
             category       = claim.get("claim_category", "")
             claimed_amount = float(claim.get("claimed_amount", 0))
             treatment_date = date.fromisoformat(str(claim.get("treatment_date")))
             member_id      = claim.get("member_id")
             hospital_name  = claim.get("hospital_name") or ""
 
-            # ── Fix 2: fetch join_date from DB, not claim dict ────────────
             member_row = (
                 supabase.table("members")
                 .select("join_date")
@@ -74,7 +71,6 @@ class PolicyCheckerAgent:
 
             join_date = date.fromisoformat(member_row.data["join_date"])
 
-            # ── Load all policy config ────────────────────────────────────
             policy            = load_policy()
             coverage          = get_coverage_for_category(category)
             waiting_periods   = get_waiting_periods()
@@ -84,7 +80,6 @@ class PolicyCheckerAgent:
             fraud_thresholds  = policy.get("fraud_thresholds", {})
             per_claim_limit   = policy.get("coverage", {}).get("per_claim_limit", 5000)
 
-            # ── Collect from extracted docs ───────────────────────────────
             all_extracted = [
                 d.get("extracted_data", {})
                 for d in documents
@@ -93,7 +88,6 @@ class PolicyCheckerAgent:
             diagnoses  = self._collect_diagnoses(all_extracted)
             line_items = self._collect_line_items(all_extracted)
 
-            # ── Build result object ───────────────────────────────────────
             result = {
                 "eligible":                  True,
                 "rejection_reasons":         [],
@@ -114,7 +108,6 @@ class PolicyCheckerAgent:
                 "notes":                     [],
             }
 
-            # ── Check 1: Minimum claim amount ─────────────────────────────
             min_amount = submission_rules.get("minimum_claim_amount", 500)
             if claimed_amount < min_amount:
                 result["eligible"] = False
@@ -123,7 +116,6 @@ class PolicyCheckerAgent:
                     f"Claimed ₹{claimed_amount} is below minimum ₹{min_amount}"
                 )
 
-            # ── Check 2: Initial waiting period (30 days) ─────────────────
             initial_days   = waiting_periods.get("initial_waiting_period_days", 30)
             days_since_join = (treatment_date - join_date).days
 
@@ -138,7 +130,6 @@ class PolicyCheckerAgent:
                     f"Eligible from {eligible_from}."
                 )
 
-            # ── Check 3: Condition-specific waiting periods ────────────────
             if diagnoses and result["waiting_period_satisfied"]:
                 condition_msg = await self._check_condition_waiting_period(
                     diagnoses, waiting_periods, join_date, treatment_date
@@ -149,7 +140,6 @@ class PolicyCheckerAgent:
                     result["rejection_reasons"].append("WAITING_PERIOD")
                     result["notes"].append(condition_msg)
 
-            # ── Check 4: Exclusions ───────────────────────────────────────
             exclusion_hit = self._check_exclusions(
                 diagnoses, line_items, exclusions, category
             )
@@ -159,7 +149,6 @@ class PolicyCheckerAgent:
                 result["rejection_reasons"].append("EXCLUDED_CONDITION")
                 result["notes"].append(f"Excluded treatment: {exclusion_hit}")
 
-            # ── Check 5: Pre-authorization (TC007) ───────────────────────
             pre_auth = self._check_pre_authorization(line_items, claimed_amount)
             if pre_auth["required"]:
                 result["requires_pre_auth"] = True
@@ -168,7 +157,6 @@ class PolicyCheckerAgent:
                 result["rejection_reasons"].append("PRE_AUTH_MISSING")
                 result["notes"].append(pre_auth["message"])
 
-            # ── Check 6: Per-claim limit (TC008) ──────────────────────────
             if claimed_amount > per_claim_limit:
                 result["eligible"] = False
                 result["rejection_reasons"].append("PER_CLAIM_EXCEEDED")
@@ -176,14 +164,12 @@ class PolicyCheckerAgent:
                     f"Claimed ₹{claimed_amount} exceeds per-claim limit of ₹{per_claim_limit}"
                 )
 
-            # ── Check 7: Category sub-limit ───────────────────────────────
             sub_limit = coverage.get("sub_limit", float("inf"))
             if result["approved_amount"] > sub_limit:
                 result["approved_amount"] = sub_limit
                 result["flags"].append(f"SUB_LIMIT_APPLIED: capped at ₹{sub_limit}")
                 result["notes"].append(f"Category sub-limit ₹{sub_limit} applied")
 
-            # ── Check 8: Line-item decisions (TC006 dental) ───────────────
             if line_items:
                 result["line_item_decisions"] = self._evaluate_line_items(
                     line_items, category, coverage, exclusions
@@ -205,7 +191,6 @@ class PolicyCheckerAgent:
                         f"{[li['description'] for li in rejected_items]}"
                     )
 
-            # ── Check 9: Network discount BEFORE co-pay (TC010) ───────────
             if result["eligible"]:
                 is_network = any(
                     nh.lower() in hospital_name.lower()
@@ -222,7 +207,6 @@ class PolicyCheckerAgent:
                             f"Network hospital discount {discount_pct}%: -₹{discount:.2f}"
                         )
 
-            # ── Check 10: Co-pay AFTER network discount (TC010) ───────────
             if result["eligible"]:
                 copay_pct = coverage.get("copay_percent", 0)
                 if copay_pct:
@@ -236,7 +220,6 @@ class PolicyCheckerAgent:
 
             result["approved_amount"] = round(result["approved_amount"], 2)
 
-            # ── Check 11: High value flag ──────────────────────────────────
             auto_review_above = fraud_thresholds.get("auto_manual_review_above", 25000)
             if claimed_amount > auto_review_above:
                 result["flags"].append(
@@ -272,8 +255,6 @@ class PolicyCheckerAgent:
                 duration_ms     = duration_ms,
             )
             raise ComponentFailureError("policy_checker", str(e))
-
-    # ── Helpers ───────────────────────────────────────────────────────────
 
     def _collect_diagnoses(self, extracted_list: list) -> list[str]:
         diagnoses = []
@@ -315,7 +296,6 @@ class PolicyCheckerAgent:
         specific     = waiting_periods.get("specific_conditions", {})
         days_elapsed = (treatment_date - join_date).days
 
-        # LLM maps diagnosis text → condition keys
         prompt = f"""Map these diagnoses to insurance waiting period condition keys.
 
 Diagnoses: {json.dumps(diagnoses)}
@@ -328,12 +308,13 @@ Do NOT guess. Only include clear matches.
 Example: ["diabetes", "hypertension"]"""
 
         try:
-            response = await call_gemini_with_retry(self.client, MODEL, prompt)
-            text = (getattr(response, "text", None) or str(response)).strip()
-            text = text.replace("```json", "").replace("```", "").strip()
+            text = call_llm(
+                prompt=prompt,
+                system="You are a medical diagnosis classifier for insurance waiting periods.",
+            )
+            text = text.strip().replace("```json", "").replace("```", "").strip()
             matched = json.loads(text)
         except Exception:
-            # LLM failed — fall back to keyword matching
             matched = self._keyword_condition_match(diagnoses)
 
         for condition in matched:

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(None, env="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(None, env="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-3.5-flash")
+    groq_api_key: str | None = Field(None, env="GROQ_API_KEY")
+    groq_model: str = Field("llama-3.3-70b-versatile")
     ai_api_key: str | None = Field(None, env="AI_API_KEY")
     upload_dir: str = Field("uploads")
     policy_path: str = Field("policy_terms.json")

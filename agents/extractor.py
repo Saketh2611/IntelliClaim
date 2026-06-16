@@ -3,14 +3,15 @@ import json
 import time
 import os
 from datetime import datetime
-from google import genai
-from google.genai import types as genai_types
+
+from groq import Groq
+
 from core.config import settings
 from core.exceptions import ComponentFailureError, UnreadableDocumentError
-from core.gemini_retry import call_gemini_with_retry
 from db import supabase
+from services.llm_client import call_llm
 
-MODEL = settings.gemini_model
+VISION_MODEL = "llama-4-scout-17b-16e-instruct"
 
 # minimum required fields per document type for readability check
 REQUIRED_FIELDS = {
@@ -27,7 +28,7 @@ REQUIRED_FIELDS = {
 class ExtractionAgent:
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.client = Groq(api_key=settings.groq_api_key)
 
     async def run(self, documents: list[dict]) -> list[dict]:
         enriched = []
@@ -41,12 +42,10 @@ class ExtractionAgent:
             try:
                 extracted_data, confidence = await self._extract_single(doc)
 
-                # check if critical fields are present
                 required = REQUIRED_FIELDS.get(doc_type, [])
                 missing_fields = [f for f in required if not extracted_data.get(f)]
                 is_readable = len(missing_fields) == 0
 
-                # if critical fields missing entirely → unreadable
                 if not is_readable and len(missing_fields) >= len(required):
                     duration_ms = int((time.time() - start) * 1000)
                     self._write_trace(
@@ -62,7 +61,6 @@ class ExtractionAgent:
                         file_name   = file_name,
                     )
 
-                # partial readability — reduce confidence
                 if missing_fields:
                     confidence = max(0.4, confidence - 0.1 * len(missing_fields))
 
@@ -70,7 +68,6 @@ class ExtractionAgent:
                 doc["is_readable"]    = is_readable
                 doc["confidence"]     = round(confidence, 2)
 
-                # update DB
                 self._update_document_in_db(doc)
 
                 duration_ms = int((time.time() - start) * 1000)
@@ -88,11 +85,9 @@ class ExtractionAgent:
                 enriched.append(doc)
 
             except UnreadableDocumentError:
-                raise  # bubble up — pipeline must stop and ask user to re-upload
+                raise
 
             except Exception as e:
-                # individual doc extraction failed but not unreadable
-                # degrade gracefully — mark low confidence, continue
                 duration_ms = int((time.time() - start) * 1000)
                 self._write_trace(
                     step_name       = f"extraction_{doc_type.lower()}",
@@ -114,7 +109,6 @@ class ExtractionAgent:
         file_path = doc.get("file_path", "")
         mime_type = doc.get("mime_type", "image/jpeg")
 
-        # ── Read actual file ──────────────────────────────────────────────
         file_content = None
         confidence   = 0.95
 
@@ -123,33 +117,44 @@ class ExtractionAgent:
                 raw_bytes    = f.read()
                 file_content = base64.b64encode(raw_bytes).decode("utf-8")
         else:
-            # file doesn't exist — for test cases without real files
-            # use any content provided directly in the doc dict
             confidence = 0.75
 
         prompt = self._build_prompt(doc_type)
 
-        # ── Call LLM with actual file if available ────────────────────────
         if file_content:
-            contents = [
-                genai_types.Part.from_bytes(
-                    data     = base64.b64decode(file_content),
-                    mime_type = mime_type,
-                ),
-                prompt,
-            ]
+            # Use vision model for image-based extraction
+            response = self.client.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{file_content}",
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                        ],
+                    }
+                ],
+                temperature=0.1,
+                max_tokens=2048,
+            )
+            result_text = response.choices[0].message.content
         else:
-            # no file — extract from any structured content in the doc
             inline_content = doc.get("content") or doc.get("extracted_data") or {}
-            contents = [
-                f"{prompt}\n\nDocument content (structured):\n{json.dumps(inline_content, indent=2)}"
-            ]
+            full_prompt = f"{prompt}\n\nDocument content (structured):\n{json.dumps(inline_content, indent=2)}"
+            result_text = call_llm(
+                prompt=full_prompt,
+                system="You are a medical document extraction system for Indian health insurance claims.",
+            )
 
-        response = await call_gemini_with_retry(self.client, MODEL, contents)
-
-        result_text = getattr(response, "text", None) or str(response)
-        extracted   = self._parse_json(result_text)
-
+        extracted = self._parse_json(result_text)
         return extracted, confidence
 
     def _build_prompt(self, doc_type: str) -> str:
@@ -217,7 +222,6 @@ Document type: {doc_type}
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
     def _parse_json(self, text: str) -> dict:
-        # strip markdown fences if present
         text = text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]
@@ -245,7 +249,7 @@ Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
                 "is_readable":    doc.get("is_readable"),
             }).eq("document_id", file_id).execute()
         except Exception:
-            pass  # don't crash pipeline on DB update failure
+            pass
 
     def _write_trace(self, step_name: str, status: str,
                      input_snapshot: dict, output_snapshot: dict,

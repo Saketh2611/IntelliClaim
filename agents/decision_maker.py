@@ -1,17 +1,14 @@
-import asyncio
 import json
 import time
 import uuid
 from datetime import datetime
 
-from google import genai
-
 from core.config import settings
 from core.exceptions import ComponentFailureError
-from core.gemini_retry import call_gemini_with_retry
 from db import supabase
+from services.llm_client import call_llm
 
-MODEL = settings.gemini_model
+MODEL = settings.groq_model
 
 
 class DecisionMakerAgent:
@@ -23,7 +20,6 @@ class DecisionMakerAgent:
 
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client = genai.Client(api_key=settings.gemini_api_key)
 
     async def run(
         self,
@@ -213,8 +209,7 @@ class DecisionMakerAgent:
         degraded: bool,
         base_decision: dict,
     ) -> dict:
-        prompt = f"""You are an insurance claim decision explainer.
-The final outcome has already been determined by deterministic rules.
+        prompt = f"""The final outcome has already been determined by deterministic rules.
 Write a concise user-facing reason without changing the outcome or amount.
 
 Claim details:
@@ -245,8 +240,10 @@ Respond ONLY with JSON:
   "reason": "concise explanation"
 }}"""
 
-        response = await call_gemini_with_retry(self.client, MODEL, prompt)
-        text = getattr(response, "text", None) or str(response)
+        text = call_llm(
+            prompt=prompt,
+            system="You are an insurance claim decision explainer.",
+        )
         return self._parse_json(text)
 
     def _manual_review(
