@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(None, env="ANTHROPIC_API_KEY")
     gemini_api_key: str | None = Field(None, env="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-3.5-flash")
-    api_key: str = Field("dev-key", env="AI_API_KEY")
+    api_key: str | None = Field(None, env="AI_API_KEY")
     upload_dir: str = Field("uploads")
     policy_path: str = Field("policy_terms.json")
     environment: str = Field("development")
