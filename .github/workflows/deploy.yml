@@ -1,0 +1,34 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy using SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            # 1. Navigate to your project directory (Change this path to your project folder)
+            cd /home/${{ secrets.EC2_USER }}/IntelliClaim
+
+            # 2. Update the code from GitHub
+            git fetch origin
+            git checkout main
+            git pull origin main
+
+            # 3. Pull new images if defined in compose, build local changes, and start containers
+            # The '-d' flag runs them in the background (detached mode)
+            docker compose up -d --build
+
+            # 4. Delete unused/dangling Docker images to save space
+            docker image prune -f
