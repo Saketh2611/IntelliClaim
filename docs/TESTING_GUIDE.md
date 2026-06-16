@@ -10,7 +10,7 @@ docker-compose up --build
 http://localhost
 ```
 
-**API Key for all requests:** `sk-intelliclaim-sak-26112003` (header: `X-API-Key`)
+**API Key for all requests:** `will be shared in mail` (header: `X-API-Key`)
 
 ---
 
