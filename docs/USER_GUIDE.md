@@ -12,7 +12,7 @@ IntelliClaim is an AI-powered health insurance claims processing system built fo
 
 - Docker and Docker Compose installed
 - A Supabase account with a configured database
-- A Google Gemini API key
+- A Groq API key (free at console.groq.com)
 - Node.js 18+ (for local frontend development)
 - Python 3.12+ (for local backend development)
 
@@ -23,7 +23,7 @@ Create a `.env` file in the project root:
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-GEMINI_API_KEY=your-gemini-api-key
+GROQ_API_KEY=your-groq-api-key
 AI_API_KEY=your-custom-api-key-for-auth
 ```
 
@@ -324,7 +324,7 @@ AI document extraction typically takes 3-10 seconds per document. Claims with ma
                     │    6-Agent Pipeline       │
                     │                           │
                     │  1. Document Validator    │
-                    │  2. Extractor (Gemini)    │
+                    │  2. Extractor (OCR+Groq)  │
                     │  3. Cross-Doc Validator   │
                     │  4. Policy Checker        │
                     │  5. Fraud Detector        │
@@ -334,8 +334,8 @@ AI document extraction typically takes 3-10 seconds per document. Claims with ma
               ┌─────────────────┼─────────────────┐
               │                 │                  │
      ┌────────▼──────┐  ┌──────▼─────┐  ┌────────▼────────┐
-     │   Supabase    │  │  Gemini AI │  │  File Storage   │
-     │  (PostgreSQL) │  │   (LLM)    │  │  (uploads/)     │
+     │   Supabase    │  │  Groq AI   │  │  File Storage   │
+     │  (PostgreSQL) │  │(Llama 3.3) │  │  (uploads/)     │
      └───────────────┘  └────────────┘  └─────────────────┘
 ```
 
