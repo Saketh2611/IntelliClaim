@@ -24,10 +24,10 @@ jobs:
             # 2. Update the code from GitHub
             git fetch origin
             git reset --hard origin/main
-            git pull origin main
 
             # 3. Pull new images if defined in compose, build local changes, and start containers
             # The '-d' flag runs them in the background (detached mode)
+            docker compose down
             docker compose up -d --build
 
             # 4. Delete unused/dangling Docker images to save space
