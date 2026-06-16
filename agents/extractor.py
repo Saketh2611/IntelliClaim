@@ -11,7 +11,7 @@ from core.exceptions import ComponentFailureError, UnreadableDocumentError
 from db import supabase
 from services.llm_client import call_llm
 
-VISION_MODEL = "llama-4-scout-17b-16e-instruct"
+VISION_MODEL = "llama-3.2-90b-vision-preview"
 
 # minimum required fields per document type for readability check
 REQUIRED_FIELDS = {
