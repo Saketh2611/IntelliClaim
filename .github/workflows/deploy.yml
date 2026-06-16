@@ -23,7 +23,7 @@ jobs:
 
             # 2. Update the code from GitHub
             git fetch origin
-            git checkout main
+            git reset --hard origin/main
             git pull origin main
 
             # 3. Pull new images if defined in compose, build local changes, and start containers
