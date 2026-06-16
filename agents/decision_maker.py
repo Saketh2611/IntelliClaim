@@ -163,7 +163,10 @@ class DecisionMakerAgent:
                 "copay_deducted": copay,
             }
 
-        if policy_result and 0 < approved_amount < claimed_amount:
+        has_rejected_items = breakdown and any(
+            li.get("status") == "REJECTED" for li in breakdown
+        )
+        if policy_result and has_rejected_items and 0 < approved_amount < claimed_amount:
             return {
                 "outcome": "PARTIAL",
                 "approved_amount": round(approved_amount, 2),
