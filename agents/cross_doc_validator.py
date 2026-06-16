@@ -1,10 +1,10 @@
 import json
 import time
-import asyncio
 from datetime import datetime
 from google import genai
 from core.config import settings
 from core.exceptions import PatientMismatchError, ComponentFailureError
+from core.gemini_retry import call_gemini_with_retry
 from db import supabase
 
 MODEL = settings.gemini_model
@@ -201,11 +201,7 @@ Respond ONLY with JSON:
   "notes": "..."
 }}"""
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model    = MODEL,
-            contents = prompt,
-        )
+        response = await call_gemini_with_retry(self.client, MODEL, prompt)
 
         result_text = getattr(response, "text", None) or str(response)
         return self._parse_json(result_text)

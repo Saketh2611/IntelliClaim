@@ -1,10 +1,10 @@
 import json
 import time
-import asyncio
 from datetime import date, datetime, timedelta
 from google import genai
 from core.config import settings
 from core.exceptions import ComponentFailureError
+from core.gemini_retry import call_gemini_with_retry
 from services.policy_loader import (
     get_coverage_for_category,
     get_waiting_periods,
@@ -328,11 +328,7 @@ Do NOT guess. Only include clear matches.
 Example: ["diabetes", "hypertension"]"""
 
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model    = MODEL,
-                contents = prompt,
-            )
+            response = await call_gemini_with_retry(self.client, MODEL, prompt)
             text = (getattr(response, "text", None) or str(response)).strip()
             text = text.replace("```json", "").replace("```", "").strip()
             matched = json.loads(text)

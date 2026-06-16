@@ -7,6 +7,7 @@ from google import genai
 
 from core.config import settings
 from core.exceptions import ComponentFailureError
+from core.gemini_retry import call_gemini_with_retry
 from db import supabase
 from services.policy_loader import get_fraud_thresholds, get_network_hospitals
 
@@ -208,11 +209,7 @@ Respond ONLY with JSON:
   "reasoning": "short explanation"
 }}"""
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=MODEL,
-            contents=prompt,
-        )
+        response = await call_gemini_with_retry(self.client, MODEL, prompt)
         text = getattr(response, "text", None) or str(response)
         return self._parse_json(text)
 

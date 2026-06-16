@@ -1,13 +1,13 @@
 import base64
 import json
 import time
-import asyncio
 import os
 from datetime import datetime
 from google import genai
 from google.genai import types as genai_types
 from core.config import settings
 from core.exceptions import ComponentFailureError, UnreadableDocumentError
+from core.gemini_retry import call_gemini_with_retry
 from db import supabase
 
 MODEL = settings.gemini_model
@@ -145,11 +145,7 @@ class ExtractionAgent:
                 f"{prompt}\n\nDocument content (structured):\n{json.dumps(inline_content, indent=2)}"
             ]
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model    = MODEL,
-            contents = contents,
-        )
+        response = await call_gemini_with_retry(self.client, MODEL, contents)
 
         result_text = getattr(response, "text", None) or str(response)
         extracted   = self._parse_json(result_text)
