@@ -1,17 +1,15 @@
-import base64
 import json
 import time
 import os
 from datetime import datetime
 
-from groq import Groq
+import pytesseract
+from PIL import Image
+from pdf2image import convert_from_path
 
-from core.config import settings
 from core.exceptions import ComponentFailureError, UnreadableDocumentError
 from db import supabase
 from services.llm_client import call_llm
-
-VISION_MODEL = "llama-3.2-90b-vision-preview"
 
 # minimum required fields per document type for readability check
 REQUIRED_FIELDS = {
@@ -28,7 +26,6 @@ REQUIRED_FIELDS = {
 class ExtractionAgent:
     def __init__(self, claim_id: str):
         self.claim_id = claim_id
-        self.client = Groq(api_key=settings.groq_api_key)
 
     async def run(self, documents: list[dict]) -> list[dict]:
         enriched = []
@@ -107,55 +104,48 @@ class ExtractionAgent:
     async def _extract_single(self, doc: dict) -> tuple[dict, float]:
         doc_type  = doc.get("document_type", "OTHER")
         file_path = doc.get("file_path", "")
-        mime_type = doc.get("mime_type", "image/jpeg")
 
-        file_content = None
-        confidence   = 0.95
+        ocr_text = None
+        confidence = 0.95
 
         if file_path and os.path.exists(file_path):
-            with open(file_path, "rb") as f:
-                raw_bytes    = f.read()
-                file_content = base64.b64encode(raw_bytes).decode("utf-8")
+            ocr_text = self._ocr_file(file_path)
         else:
             confidence = 0.75
 
         prompt = self._build_prompt(doc_type)
 
-        if file_content:
-            # Use vision model for image-based extraction
-            response = self.client.chat.completions.create(
-                model=VISION_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{file_content}",
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    }
-                ],
-                temperature=0.1,
-                max_tokens=2048,
-            )
-            result_text = response.choices[0].message.content
+        if ocr_text and ocr_text.strip():
+            full_prompt = f"{prompt}\n\nOCR-extracted text from the document:\n---\n{ocr_text}\n---"
         else:
             inline_content = doc.get("content") or doc.get("extracted_data") or {}
             full_prompt = f"{prompt}\n\nDocument content (structured):\n{json.dumps(inline_content, indent=2)}"
-            result_text = call_llm(
-                prompt=full_prompt,
-                system="You are a medical document extraction system for Indian health insurance claims.",
-            )
+            confidence = 0.7
+
+        result_text = call_llm(
+            prompt=full_prompt,
+            system="You are a medical document extraction system for Indian health insurance claims. Extract ONLY what is present in the text. Do NOT invent or hallucinate any values.",
+        )
 
         extracted = self._parse_json(result_text)
         return extracted, confidence
+
+    def _ocr_file(self, file_path: str) -> str:
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == ".pdf":
+            pages = convert_from_path(file_path, dpi=300)
+            text_parts = []
+            for page in pages:
+                text_parts.append(pytesseract.image_to_string(page, lang="eng"))
+            return "\n".join(text_parts)
+
+        if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
+            image = Image.open(file_path)
+            return pytesseract.image_to_string(image, lang="eng")
+
+        # unsupported format — return empty
+        return ""
 
     def _build_prompt(self, doc_type: str) -> str:
         field_map = {
@@ -212,13 +202,10 @@ Extract exactly these fields (use null if not found, do NOT invent values):
 
         fields = field_map.get(doc_type, "Extract all relevant medical fields as key-value pairs.")
 
-        return f"""You are a medical document extraction system for Indian health insurance claims.
-Extract ONLY what is visible in the document. Do NOT invent or hallucinate any values.
-If a field is not visible or legible, set it to null.
-
-Document type: {doc_type}
+        return f"""Document type: {doc_type}
 {fields}
 
+If a field is not visible or legible, set it to null.
 Respond ONLY with a valid JSON object. No explanation, no markdown fences."""
 
     def _parse_json(self, text: str) -> dict:
