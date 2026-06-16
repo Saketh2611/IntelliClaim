@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ./backend
+    build: .
     # Remove the ports mapping — nginx handles it
     expose:
       - "8000"
